@@ -1,0 +1,434 @@
+generator client {
+  provider      = "prisma-client-js"
+  // Imagen Docker (bookworm + openssl 3); "native" sigue valiendo en Mac/local.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String         @id @default(cuid())
+  name         String
+  email        String         @unique
+  passwordHash String
+  documentId   String?        @unique
+  phone        String?
+  role         String         @default("ORGANIZER")
+  active       Boolean        @default(true)
+  /** Cuándo el titular aceptó el tratamiento de datos (Ley 1581/2012). */
+  dataProcessingAcceptedAt DateTime?
+  dataProcessingVersion    String?
+  createdAt    DateTime       @default(now())
+  categories   Category[]
+  players      Player[]
+  tournaments  Tournament[]
+  notifications Notification[]
+  passwordResetTokens PasswordResetToken[]
+  refereeSessions      RefereeSession[]
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Category {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  distance     Int
+  active       Boolean       @default(true)
+  sortOrder    Int           @default(0)
+  players      Player[]
+  inscriptions Inscription[]
+
+  @@unique([userId, name])
+}
+
+model Player {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** Código público único (TB-XXXXXX) para inscribir sin duplicar ficha. */
+  code              String?       @unique
+  name              String
+  alias             String?
+  documentId        String?
+  email             String?
+  phone             String?
+  city              String?
+  club              String?
+  photoUrl          String?
+  photoMime         String?
+  photoData         Bytes?        @db.MediumBlob
+  categoryId        String?
+  category          Category?     @relation(fields: [categoryId], references: [id])
+  /** Distancia de handicap actual (carambolas a completar). Lo cambia el organizador. */
+  handicap          Int?
+  inscriptions      Inscription[]
+  tournamentRecords PlayerTournamentRecord[]
+  handicapChanges   PlayerHandicapChange[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([userId, email])
+  @@index([userId, documentId])
+  @@index([documentId])
+}
+
+model Tournament {
+  id               String        @id @default(cuid())
+  userId           String
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  slug             String        @unique
+  venue            String?
+  date             DateTime?
+  status           String        @default("DRAFT")
+  mix              String        @default("MIXED")
+  singleCategoryId String?
+  equalInnings     Boolean       @default(true)
+  requireInnings   Boolean       @default(false)
+  maxInnings       Int?
+  tableCount       Int           @default(4)
+  groupSize        Int           @default(4)
+  /** Cupo previsto (ej. 24). Si está definido, los grupos reservan plazas aunque falten inscritos. */
+  plannedCapacity  Int?
+  /** true cuando ya se generaron los partidos de grupos y arrancó la fase. */
+  groupsFinalized  Boolean       @default(false)
+  qualifyPerGroup  Int           @default(2)
+  /** AVERAGE | GROUP_ORDER | CAROMS (histórico: PG → carambolas). */
+  groupTiebreak    String        @default("CAROMS")
+  knockoutLayout   String        @default("COLUMNS")
+  /** AUTO: rellena cuadro por ranking. PLAY_IN: repesca. MANUAL: eliges plazas extra. */
+  knockoutFillMode String        @default("AUTO")
+  /** FIXED: árbol fijo. SHUFFLE_R1: sorteo 1ª ronda. SHUFFLE_EACH: sorteo cada ronda (sin árbol fijo). */
+  knockoutDrawMode String        @default("FIXED")
+  /** Si true, el cuadro completo se crea al generar partidos de grupos (plazas por grupo + puesto). */
+  knockoutPreDraw  Boolean       @default(false)
+  /** CROSS_GROUP_SEED | RANDOM | RANDOM_RESPECT_SEEDS — solo con knockoutPreDraw. */
+  knockoutFirstRoundPairing String @default("CROSS_GROUP_SEED")
+  /** JSON: qué secciones de /t/{slug} ven deportistas (organizador/admin previa = todo). */
+  participantScreens String      @default("{\"inicio\":true,\"grupos\":true,\"cuadro\":true,\"mesas\":true,\"stats\":true,\"tv\":true}")
+  prizeChampion    Boolean       @default(true)
+  prizeHighRun     Boolean       @default(true)
+  prizeBestAverage Boolean       @default(true)
+  entryFee         Int?
+  /** NEQUI | TRANSFERENCIA | EFECTIVO | OTRO */
+  paymentMethod    String?
+  /** Número Nequi, cuenta bancaria u otro destino. */
+  paymentAccount   String?
+  paymentNote      String?
+  /** % de lo recaudado en inscripciones (pagadas) destinado a la bolsa de premios. */
+  prizePoolPercent Int?
+  /** FIXED: montos fijos. PERCENT: % de la bolsa por puesto. */
+  prizeShareMode   String        @default("FIXED")
+  /** Cobro extra por entrar a repesca (opcional). */
+  repescaFee       Int?
+  /** true cuando ya se guardó el palmarés / promedios de este torneo. */
+  historyCaptured  Boolean       @default(false)
+  /** Si true, no aparece en el listado público (Torneos / historial). */
+  hidden           Boolean       @default(false)
+  /** Portada del torneo (se muestra en la tarjeta). */
+  imageMime        String?
+  imageData        Bytes?        @db.MediumBlob
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  tables           Table[]
+  inscriptions     Inscription[]
+  groups           Group[]
+  matches          Match[]
+  prizes           TournamentPrize[]
+  notifications    Notification[]
+  playerRecords    PlayerTournamentRecord[]
+  ads              Ad[]
+}
+
+/** Snapshot al cerrar un torneo: título, puesto y promedio (base del handicap). */
+model PlayerTournamentRecord {
+  id             String      @id @default(cuid())
+  playerId       String
+  player         Player      @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  tournamentKey  String
+  tournamentId   String?
+  tournament     Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  tournamentName String
+  tournamentSlug String
+  tournamentDate DateTime?
+  venue          String?
+  place          Int?
+  isChampion     Boolean     @default(false)
+  played         Int         @default(0)
+  won            Int         @default(0)
+  lost           Int         @default(0)
+  caroms         Int         @default(0)
+  innings        Int         @default(0)
+  average        Float?
+  highRun        Int         @default(0)
+  createdAt      DateTime    @default(now())
+
+  @@unique([playerId, tournamentKey])
+  @@index([playerId])
+  @@index([isChampion])
+}
+
+model PlayerHandicapChange {
+  id             String   @id @default(cuid())
+  playerId       String
+  player         Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  previous       Int?
+  next           Int
+  reason         String?
+  championships  Int      @default(0)
+  careerAverage  Float?
+  changedByName  String?
+  createdAt      DateTime @default(now())
+
+  @@index([playerId])
+}
+
+model TournamentPrize {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  place        Int
+  amount       Int
+  /** % de la bolsa de premios (modo PERCENT). */
+  sharePercent Int?
+
+  @@unique([tournamentId, place])
+}
+
+model Table {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  number       Int
+  matches      Match[]
+  groups       Group[]
+
+  @@unique([tournamentId, number])
+}
+
+model Inscription {
+  id                String     @id @default(cuid())
+  tournamentId      String
+  tournament        Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  playerId          String
+  player            Player     @relation(fields: [playerId], references: [id])
+  participantUserId String?
+  categoryId        String?
+  category          Category?  @relation(fields: [categoryId], references: [id])
+  distance          Int
+  paid              Boolean    @default(false)
+  checkedIn         Boolean    @default(false)
+  koEligible        Boolean    @default(false)
+  koManualPick      Boolean    @default(false)
+  /** null = sin definir, true = quiere repesca, false = no participa */
+  repescaOptIn      Boolean?
+  repescaFeePaid      Boolean    @default(false)
+  createdAt         DateTime   @default(now())
+  groupMembers      GroupMember[]
+  matchesA          Match[]       @relation("MatchSideA")
+  matchesB          Match[]       @relation("MatchSideB")
+  wins              Match[]       @relation("MatchWinner")
+  notifications     Notification[]
+
+  @@unique([tournamentId, playerId])
+  @@index([participantUserId])
+}
+
+model Notification {
+  id            String       @id @default(cuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tournamentId  String?
+  tournament    Tournament?  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  inscriptionId String?
+  inscription   Inscription? @relation(fields: [inscriptionId], references: [id], onDelete: Cascade)
+  matchId       String?
+  match         Match?       @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  kind          String
+  title         String
+  body          String
+  readAt        DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+model Group {
+  id           String        @id @default(cuid())
+  tournamentId String
+  tournament   Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  name         String
+  sortOrder    Int
+  /** Máximo de jugadores en este grupo (habitual = groupSize del torneo). */
+  maxMembers   Int           @default(4)
+  status       String        @default("OPEN")
+  tiebreakNote String?
+  /** Mesa fija en fase de grupos. */
+  tableId      String?
+  table        Table?        @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  members      GroupMember[]
+  matches      Match[]
+}
+
+model GroupMember {
+  id            String      @id @default(cuid())
+  groupId       String
+  group         Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  inscriptionId String
+  inscription   Inscription @relation(fields: [inscriptionId], references: [id], onDelete: Cascade)
+  seed          Int?
+  qualified     Boolean     @default(false)
+
+  @@unique([groupId, inscriptionId])
+}
+
+model Match {
+  id           String       @id @default(cuid())
+  tournamentId String
+  tournament   Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  groupId      String?
+  group        Group?       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  phase        String       @default("GROUP")
+  /** ELIM_VS_ELIM | ELIM_VS_QUALIFIED | QUALIFIED_CONFIRM */
+  playInKind   String?
+  round        Int          @default(0)
+  bracketSlot  Int?
+  nextMatchId  String?
+  nextSide     String?
+  sideAId      String?
+  sideA        Inscription? @relation("MatchSideA", fields: [sideAId], references: [id])
+  sideBId      String?
+  sideB        Inscription? @relation("MatchSideB", fields: [sideBId], references: [id])
+  /** Plazas prefijadas (cuadro desde grupos): sortOrder del grupo + puesto 1..N */
+  sideAGroupOrder Int?
+  sideAPlace      Int?
+  sideBGroupOrder Int?
+  sideBPlace      Int?
+  distanceA    Int
+  distanceB    Int
+  caromsA      Int?
+  caromsB      Int?
+  innings      Int?
+  highRunA     Int?
+  highRunB     Int?
+  tableId      String?
+  table        Table?       @relation(fields: [tableId], references: [id])
+  status        String       @default("SCHEDULED")
+  winnerId      String?
+  winner        Inscription? @relation("MatchWinner", fields: [winnerId], references: [id])
+  closeReason   String?
+  paused        Boolean      @default(false)
+  liveStartedAt DateTime?
+  createdAt     DateTime     @default(now())
+  visits        MatchVisit[]
+  notifications Notification[]
+  refereeSync   RefereeSync?
+  refereeEvents RefereeEvent[]
+}
+
+model MatchVisit {
+  id        String    @id @default(cuid())
+  matchId   String
+  match     Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  inning    Int
+  side      String
+  caroms    Int       @default(0)
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+}
+
+/** Publicidad: ventana tipo Nequi (INTERSTITIAL) o aviso pequeño (BANNER). */
+model Ad {
+  id        String   @id @default(cuid())
+  kind      String
+  /** CUSTOM | GOOGLE | YOUTUBE */
+  provider  String   @default("CUSTOM")
+  title     String
+  body      String?  @db.Text
+  href      String?
+  /** URL de YouTube o ca-pub-…|slot de AdSense */
+  embed     String?
+  imageMime String?
+  imageData Bytes?   @db.MediumBlob
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  /** Veces que el anuncio llegó a mostrarse. */
+  views     Int      @default(0)
+  /** Vacío: se ve en toda la aplicación. Con torneo: solo al entrar a ese torneo. */
+  tournamentId String?
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  slides    AdSlide[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tournamentId])
+}
+
+/// Imágenes extra de un banner. La primera puede seguir en Ad.imageData.
+model AdSlide {
+  id        String   @id @default(cuid())
+  adId      String
+  ad        Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+  imageMime String
+  imageData Bytes    @db.MediumBlob
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([adId])
+}
+
+/// Sesión de la tablet de arbitraje. Solo se guarda el hash del token.
+model RefereeSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  deviceId  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Punto de partida del historial de la tablet. No sustituye las visitas del partido.
+model RefereeSync {
+  matchId   String   @id
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  baseline  String   @db.LongText
+  tableId   String?
+  epoch     Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+/// Evento idempotente enviado por una tablet. La clave es el id creado en el dispositivo.
+model RefereeEvent {
+  id         String   @id
+  matchId    String
+  match      Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId     String
+  deviceId   String
+  epoch      Int      @default(1)
+  sequence   Int
+  type       String
+  payload    String   @db.Text
+  clientTime DateTime
+  receivedAt DateTime @default(now())
+
+  @@unique([matchId, epoch, sequence])
+  @@index([matchId, epoch])
+}

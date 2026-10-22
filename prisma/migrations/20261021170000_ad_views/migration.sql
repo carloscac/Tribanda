@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Ad` ADD COLUMN `views` INTEGER NOT NULL DEFAULT 0;

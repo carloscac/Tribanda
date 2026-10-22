@@ -1,0 +1,41 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme-root}
+      MYSQL_DATABASE: tribanda
+      MYSQL_USER: tribanda
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme-tribanda}
+    ports:
+      - "3306:3306"
+    volumes:
+      - tribanda-mysql:/var/lib/mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql://tribanda:${MYSQL_PASSWORD:-changeme-tribanda}@db:3306/tribanda
+      AUTH_SECRET: ${AUTH_SECRET:?Define AUTH_SECRET en un archivo .env junto a este compose}
+      AUTH_TRUST_HOST: "true"
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-Administrador}
+    restart: unless-stopped
+
+volumes:
+  tribanda-mysql:

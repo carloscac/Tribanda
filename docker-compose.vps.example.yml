@@ -1,0 +1,35 @@
+# Grupo Único — VPS Linux (/GrupoUnico/DevOps)
+# Sin .env: variables literales en el compose del stack (nginx-proxy + letsencrypt).
+# Sustituye secretos y DATABASE_URL antes de usar.
+
+  Tribanda:
+    image: carloscacua/tribanda:latest
+    container_name: container-pagina-tribanda
+    restart: always
+    mem_limit: 500MB
+    expose:
+      - "8080"
+    environment:
+      - VIRTUAL_HOST=tribanda.grupounico.com.co,www.tribanda.grupounico.com.co
+      - VIRTUAL_PORT=8080
+      - PORT=8080
+      - LETSENCRYPT_HOST=tribanda.grupounico.com.co,www.tribanda.grupounico.com.co
+      - LETSENCRYPT_EMAIL=soportegrupounico@gmail.com
+      - AUTH_SECRET=cambia-esto-secreto-largo-produccion
+      - DATABASE_URL=mysql://root:CONTRASEÑA_URL_ENCODED@154.53.35.9:3306/tribanda
+      - AUTH_TRUST_HOST=true
+      - BOOTSTRAP_ADMIN_EMAIL=admin@ejemplo.com
+      - BOOTSTRAP_ADMIN_PASSWORD=minimo-6-chars
+      - BOOTSTRAP_ADMIN_NAME=Administrador
+      - APP_URL=https://tribanda.grupounico.com.co
+      - SMTP_HOST=smtp.ejemplo.com
+      - SMTP_PORT=587
+      - SMTP_USER=
+      - SMTP_PASS=
+      - SMTP_FROM=TriBanda <noreply@ejemplo.com>
+      # WhatsApp Cloud API (opcional). Sin estas dos, los avisos solo van por la app.
+      # - WHATSAPP_TOKEN=
+      # - WHATSAPP_PHONE_NUMBER_ID=
+    depends_on:
+      - nginx-proxy
+      - letsencrypt
